@@ -1,0 +1,144 @@
+---
+title: "Assignment Practical ML"
+output: 
+  html_document: 
+    keep_md: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      cache=TRUE)
+```
+
+# Task
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+Peer Review Portion
+
+Your submission for the Peer Review portion should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+Course Project Prediction Quiz Portion
+
+Apply your machine learning algorithm to the 20 test cases available in the test data above and submit your predictions in appropriate format to the Course Project Prediction Quiz for automated grading. 
+
+# Loading Data
+
+Packages for data reshaping, modeling and visualization (*caret* and *tidyverse*) are loaded. The csv files are loaded directly from the cloud.
+
+```{r}
+library(tidyverse);library(caret)
+training<-read.table("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",sep = ",",header = TRUE)
+testing<-read.table("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",sep = ",",header = TRUE)
+```
+
+# EDA
+## General structure of the data
+
+```{r}
+str(training)
+```
+
+A quick overview yields many NA cases, furthermore some erroneous entries ("#DIV/0") and wrong labeling of variables("kurtosis_roll_arm" is factor instead of numeric). In the following, we exclude a number of features from the analysis:
+
+## Low Variance Variables
+Zero and near-zero variance variables are excluded as they likely contain little to no information which would be useful in generating the model.
+
+```{r}
+ZeroVar<-nearZeroVar(training,saveMetrics = TRUE)
+exclude.lowvar<-ZeroVar[ZeroVar$nzv,]%>%rownames()
+exclude.lowvar
+```
+
+## Multicollinearity
+Variables with strong correlation ($rsq>0.8$) are excluded.
+
+```{r warning=FALSE}
+numtrain<-apply(training[,-160],2,as.numeric)
+M<-abs(cor(numtrain[,-160]))
+diag(M)<-0
+exclude.multicoll <- rownames(which(M>0.8,arr.ind=TRUE))
+exclude.multicoll
+```
+
+## Discard NA columns
+Variables containing mostly NA values are also discarded.
+
+```{r}
+na.column.counts <- sapply(training,function(x) sum(is.na(x)))
+exclude.na <- names(na.column.counts[na.column.counts>18000])
+exclude.na
+```
+
+## Feature Subsetting
+Subsetting is done based on the previously described criteria, both for the training as well as for the testing set.
+
+```{r}
+exclude.all<-unique(c(exclude.lowvar,exclude.na,exclude.multicoll))
+training_f<-training[!colnames(training)%in%exclude.all]
+testing_f<-testing[!colnames(testing)%in%exclude.all]
+```
+
+# Validation Set
+
+A validation set is build to estimate the out of sample error containing 10% of the cases while balancing on the outcome classe.
+
+```{r}
+trainIndex <- createDataPartition(training$classe, p = .9, 
+                                  list = TRUE, 
+                                  times = 1)
+```
+
+# Model
+
+The bodel is build using only the numeric variables of the generated dataset. We use 2-fold cross validation to allow for quicker calculation and give the outputs as class probabilities. The generated model file is reduced in size by trimming and not including the training dataset. We only save the final predictions. As predictive model, we use a random forest capable of dealing with large numbers of variables, some of which might still be correlated. It is also able to pick up on simple interdependencies and nonlinear dependencies. 
+
+```{r}
+fitControl <- trainControl(
+  method="cv",
+  number=2,
+  savePredictions="final",
+  classProbs=TRUE,
+  verboseIter=TRUE,
+  index = trainIndex,
+  returnData = FALSE,
+  trim=TRUE,
+  allowParallel = TRUE
+)
+
+train2<-training_f%>%
+      select_if(is.numeric)
+
+m1<-train(x = train2,y = training_f$classe,method="rf",
+          trControl=fitControl)
+```
+
+The model performance can now be estimated:
+
+```{r}
+in_sample_error<-confusionMatrix(m1)
+in_sample_error
+```
+
+The in-sample accuracty is estimated at 100%. To ensure this is not due to overfitting, we check the holdout sample:
+
+```{r}
+valid_prediction<-predict(object=m1$finalModel,
+                          newdata = training_f[-(trainIndex[[1]]),])
+valid_groundtruth<-training_f$classe[-(trainIndex[[1]])]
+confusionMatrix(valid_prediction,valid_groundtruth)
+```
+
+Nicely enough, the out of sample accuracy is 100% as well. All classes were categorized correctly. These are encouraging results and make it likely, that classification on the test set will also perform well.
+
+# Test Set
+The predictions for the test set are:
+
+```{r}
+test_prediction<-predict(object=m1$finalModel,newdata = testing_f)
+test_prediction
+```
+
+According to the quiz, the predictions are 100% accurate.
